@@ -24,11 +24,17 @@ class Users
     {
         include "connection1.php";
         $json = json_decode($json, true);
-        $sql = "INSERT INTO tblusers(user_fullname, user_username, user_password) VALUES(:user_fullname, :user_username, :user_password)";
+        if (recordExists($json["user_username"], "tblusers", "user_username")) {
+            return -1;
+        }
+        $image = "RRRR.jpg";
+        $sql = "INSERT INTO tblusers(user_fullname, user_username, user_password, user_profile_picture) 
+        VALUES(:user_fullname, :user_username, :user_password, :user_profile_picture)";
         $stmt = $conn->prepare($sql);
         $stmt->bindParam(":user_fullname", $json["user_fullname"]);
         $stmt->bindParam(":user_username", $json["user_username"]);
         $stmt->bindParam(":user_password", $json["user_password"]);
+        $stmt->bindParam(":user_profile_picture", $image);
         $stmt->execute();
         return $stmt->rowCount() > 0 ? 1 : 0;
     }
@@ -101,10 +107,12 @@ class Users
     {
         include "connection1.php";
         $json = json_decode($json, true);
-        $sql = "SELECT a.user_fullname, a.user_profile_picture, b.post_description, b.post_date, b.post_image 
+        $sql = "SELECT a.user_id, a.user_fullname, a.user_profile_picture, b.*, COUNT(c.userlikes_id) AS likes 
         FROM tblusers AS a 
         INNER JOIN tblpost AS b ON a.user_id = b.post_user_id 
+        LEFT JOIN tbluserlikes as c ON c.userlikes_post_id = b.post_id 
         WHERE b.post_user_id = :user_id 
+        GROUP BY b.post_id
         ORDER BY post_date DESC";
         $stmt = $conn->prepare($sql);
         $stmt->bindParam(":user_id", $json["user_id"]);
@@ -112,6 +120,7 @@ class Users
         $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
         return $stmt->rowCount() > 0 ? json_encode($result) : 0;
     }
+
 
     function getUserDetails($json)
     {
@@ -157,6 +166,7 @@ class Users
 
     function getComments($json)
     {
+        // by Sir Mac
         include "connection1.php";
         $json = json_decode($json, true);
         $sql = "SELECT a.user_id, a.user_fullname, a.user_profile_picture, c.usercoms_comments 
@@ -217,7 +227,7 @@ class Users
         return $stmt->rowCount() > 0 ? 1 : 0;
     }
 
-    function updateProfile($json)
+    function updateProfilePicture($json)
     {
         include "connection1.php";
         $json = json_decode($json, true);
@@ -237,17 +247,27 @@ class Users
                 break;
         }
         $sql = "UPDATE tblusers 
-        SET user_profile_picture = :user_profile_picture, 
-            user_fullname = :user_fullname, 
-            user_username = :user_username, 
-            user_password = :user_password 
+        SET user_profile_picture = :user_profile_picture 
         WHERE user_id = :user_id;";
         $stmt = $conn->prepare($sql);
         $stmt->bindParam(":user_profile_picture", $returnValueImage);
-        $stmt->bindParam(":user_fullname", $json["user_fullname"]);
-        $stmt->bindParam(":user_username", $json["user_username"]);
-        $stmt->bindParam(":user_password", $json["user_password"]);
         $stmt->bindParam(":user_id", $json["user_id"]);
+        $stmt->execute();
+        return $stmt->rowCount() > 0 ? 1 : 0;
+    }
+
+    function updatePersonalProfile($json)
+    {
+        include "connection1.php";
+        $json = json_decode($json, true);
+        $sql = "UPDATE tblusers 
+        SET user_fullname = :user_fullname, user_username = :user_username, user_password = :user_password 
+        WHERE user_id = :user_id;";
+        $stmt = $conn->prepare($sql);
+        $stmt->bindParam("user_fullname", $json["user_fullname"]);
+        $stmt->bindParam("user_username", $json["user_username"]);
+        $stmt->bindParam("user_password", $json["user_password"]);
+        $stmt->bindParam("user_id", $json["user_id"]);
         $stmt->execute();
         return $stmt->rowCount() > 0 ? 1 : 0;
     }
@@ -258,7 +278,7 @@ class Users
         $json = json_decode($json, true);
 
         try {
-            $sql = "DELETE FROM tblpost WHERE post_id = :post_id";
+            $sql = "DELETE FROM tblpost WHERE post_id = :post_id;";
             $stmt = $conn->prepare($sql);
             $stmt->bindParam(":post_id", $json["post_id"]);
             $stmt->execute();
@@ -270,6 +290,28 @@ class Users
             return 0; // Return 0 to indicate failure
         }
     }
+
+    function searchUser($json)
+    {
+        include "connection1.php";
+        $json = json_decode($json, true);
+        $sql = "SELECT * FROM tblusers WHERE user_fullname LIKE CONCAT(:user_fullname, '%')";
+        $stmt = $conn->prepare($sql);
+        $stmt->bindParam(":user_fullname", $json["user_fullname"]);
+        $stmt->execute();
+        return $stmt->rowCount() > 0 ? json_encode($stmt->fetchAll(PDO::FETCH_ASSOC)) : 0;
+    }
+}
+
+function recordExists($value, $table, $column)
+{
+    include "connection1.php";
+    $sql = "SELECT COUNT(*) FROM $table WHERE $column = :value";
+    $stmt = $conn->prepare($sql);
+    $stmt->bindParam(":value", $value);
+    $stmt->execute();
+    $count = $stmt->fetchColumn();
+    return $count > 0;
 }
 
 function uploadImage()
@@ -292,7 +334,7 @@ function uploadImage()
             if ($fileError === 0) {
                 if ($fileSize < 25000000) {
                     $fileNameNew = uniqid("", true) . "." . $fileActualExt;
-                    $fileDestination = 'images/' . $fileNameNew;
+                    $fileDestination = "images/{$fileNameNew}";
                     move_uploaded_file($fileTmpName, $fileDestination);
                     return $fileNameNew;
                 } else {
@@ -371,11 +413,17 @@ switch ($operation) {
     case "isUserLiked":
         echo $users->isUserLiked($json);
         break;
-    case "updateProfile":
-        echo $users->updateProfile($json);
+    case "updateProfilePicture":
+        echo $users->updateProfilePicture($json);
+        break;
+    case "updatePersonalProfile":
+        echo $users->updatePersonalProfile($json);
         break;
     case "deletePost":
         echo $users->deletePost($json);
+        break;
+    case "searchUser":
+        echo $users->searchUser($json);
         break;
     default:
         break;
